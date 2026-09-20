@@ -2276,6 +2276,16 @@ export default function App() {
     return map;
   }, [clientes]);
 
+  // Dá um número (nº da OS) pra qualquer Ordem de Serviço que ainda não tenha —
+  // as antigas recebem numeração na sequência, sem mudar a ordem em que foram criadas.
+  useEffect(() => {
+    if (loading) return;
+    if (!ordensServico.some((o) => !parseInt(o.numero, 10))) return;
+    let maior = Math.max(0, ...ordensServico.map((o) => parseInt(o.numero, 10) || 0));
+    persist(STORAGE_KEYS.ordensServico, setOrdensServico, ordensServico.map((o) => (parseInt(o.numero, 10) ? o : { ...o, numero: ++maior })));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ordensServico, loading]);
+
   // Espelha TODO lançamento de Produção como conta a receber no Financeiro
   // — não só os pagos. Assim "Em aberto" e "Atrasado" aparecem certinho na
   // aba A Receber também, e não só dentro de Produção. O status de cada um
@@ -2544,6 +2554,7 @@ export default function App() {
           {tab === "clientes" && (
             <ClientesModule
               clientes={clientes}
+              vendedores={vendedores}
               onChange={(next) => persist(STORAGE_KEYS.clientes, setClientes, next)}
               statusClientes={statusClientes}
               producaoEsc={producaoEsc}
@@ -2563,6 +2574,7 @@ export default function App() {
               propostas={propostas}
               clientes={clientes}
               vendedores={vendedores}
+              ordensServico={ordensServico}
               onChange={(next) => persist(STORAGE_KEYS.propostas, setPropostas, next)}
               draft={propostaDraft}
               onDraftHandled={() => setPropostaDraft(null)}
@@ -2579,6 +2591,7 @@ export default function App() {
           {tab === "agenda" && (
             <AgendaBombasModule
               agendamentos={agendamentos}
+              ordensServico={ordensServico}
               bombas={bombas}
               clientes={clientes}
               onChange={(next) => persist(STORAGE_KEYS.agendamentos, setAgendamentos, next)}
@@ -2594,6 +2607,7 @@ export default function App() {
               clientes={clientes}
               bombas={bombas}
               agendamentos={agendamentos}
+              propostas={propostas}
               onChange={(next) => persist(STORAGE_KEYS.ordensServico, setOrdensServico, next)}
               draft={osDraft}
               onDraftHandled={() => setOsDraft(null)}
@@ -3449,6 +3463,7 @@ const emptyCliente = () => ({
   inscricaoEstadual: "",
   enderecoEntrega: "", // obra/local de entrega, quando diferente da cobrança
   obras: [], // várias obras do mesmo cliente — cada uma com endereço, responsável, etc.
+  vendedorId: "", // vendedor responsável por esse cliente
   status: "EM ABERTO",
   observacao: "",
 });
@@ -3494,7 +3509,7 @@ function formatarCep(valor) {
   return d.replace(/(\d{5})(\d{1,3})$/, "$1-$2");
 }
 
-function ClientesModule({ clientes, onChange, statusClientes, producaoEsc, producaoPerf, ticks }) {
+function ClientesModule({ clientes, onChange, statusClientes, producaoEsc, producaoPerf, ticks, vendedores }) {
   const [query, setQuery] = useState("");
   const [filtroStatus, setFiltroStatus] = useState("todos");
   const [editing, setEditing] = useState(null);
@@ -3636,7 +3651,7 @@ function ClientesModule({ clientes, onChange, statusClientes, producaoEsc, produ
         <EmptyState icon={Users} title="Nenhum cliente encontrado" hint="Cadastre o primeiro cliente para começar." />
       ) : (
         <Table
-          columns={["Pedido", "Nome", "Telefone", "Status", ""]}
+          columns={["Pedido", "Nome", "Telefone", "Vendedor", "Status", ""]}
           rows={[...filtered].sort((a, b) => (parseInt(b.pedido, 10) || 0) - (parseInt(a.pedido, 10) || 0)).map((c) => (
             <tr key={c.id} style={rowStyle}>
               <td style={tdStyle}><PedidoStub n={c.pedido} /></td>
@@ -3645,6 +3660,7 @@ function ClientesModule({ clientes, onChange, statusClientes, producaoEsc, produ
                 {c.empresa && <div style={{ fontSize: "11.5px", color: "var(--text-muted)", fontWeight: 400 }}>{c.empresa}</div>}
               </td>
               <td style={{ ...tdStyle, color: "var(--text-muted)" }}>{c.telefone || "-"}</td>
+              <td style={{ ...tdStyle, color: "var(--text-muted)" }}>{(vendedores || []).find((v) => v.id === c.vendedorId)?.nome || "-"}</td>
               <td style={tdStyle}><StatusBadge status={c.status} /></td>
               <td style={{ ...tdStyle, textAlign: "right" }}>
                 <div style={{ display: "inline-flex", gap: "4px" }}>
@@ -3659,7 +3675,7 @@ function ClientesModule({ clientes, onChange, statusClientes, producaoEsc, produ
         />
       )}
 
-      {editing && <ClienteForm initial={editing} onSave={save} onClose={() => setEditing(null)} statusClientes={statusClientes} />}
+      {editing && <ClienteForm initial={editing} onSave={save} onClose={() => setEditing(null)} statusClientes={statusClientes} vendedores={vendedores} />}
       {deleting && (
         <ConfirmDelete label={`o cliente "${deleting.nome}"`} dados={deleting} onConfirm={() => remove(deleting.id)} onCancel={() => setDeleting(null)} />
       )}
@@ -4031,7 +4047,7 @@ function GaleriaDivulgacaoSection({ galeria, onChange }) {
 
 
 
-function ClienteForm({ initial, onSave, onClose, statusClientes }) {
+function ClienteForm({ initial, onSave, onClose, statusClientes, vendedores }) {
   const [form, setForm] = useState(initial);
   const [rascunhoRecuperado] = useState(() => !!initial.__rascunho);
   const [obraAberta, setObraAberta] = useState(null);
@@ -4211,7 +4227,13 @@ function ClienteForm({ initial, onSave, onClose, statusClientes }) {
           <Input value={form.enderecoEntrega} onChange={set("enderecoEntrega")} placeholder="Ex: Rua da Obra, 123 - Bairro X" />
         </Field>
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: "0 16px" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 16px" }}>
+          <Field label="Vendedor" hint="Cadastre os vendedores em Configurações → Vendedores">
+            <Select value={form.vendedorId || ""} onChange={set("vendedorId")}>
+              <option value="">Sem vendedor definido</option>
+              {(vendedores || []).map((v) => <option key={v.id} value={v.id}>{v.nome}</option>)}
+            </Select>
+          </Field>
           <Field label="Status">
             <Select value={form.status} onChange={set("status")}>
               {[...new Set([form.status, ...(statusClientes || []).map((s) => s.nome)].filter(Boolean))].map((s) => (
@@ -4219,10 +4241,10 @@ function ClienteForm({ initial, onSave, onClose, statusClientes }) {
               ))}
             </Select>
           </Field>
-          <Field label="Observação">
-            <Input value={form.observacao} onChange={set("observacao")} />
-          </Field>
         </div>
+        <Field label="Observação">
+          <Input value={form.observacao} onChange={set("observacao")} />
+        </Field>
 
         <div style={{ marginBottom: "8px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <span className="tl-mono" style={{ fontSize: "11px", color: "var(--text-muted)", textTransform: "uppercase" }}>Obras desse cliente</span>
@@ -5777,6 +5799,7 @@ Se precisar de nota fiscal, acrescentar 18% ao valor total.`;
 
 const emptyProposta = () => ({
   id: uid(),
+  ordemServicoId: "", // OS vinculada — puxa os dados sozinha
   clienteId: "",
   obraTexto: "",
   tipo: "Bombeamento de concreto",
@@ -5794,7 +5817,7 @@ const emptyProposta = () => ({
   motivoPerda: "",
 });
 
-function PropostasModule({ propostas, clientes, vendedores, onChange, draft, onDraftHandled }) {
+function PropostasModule({ propostas, clientes, vendedores, ordensServico, onChange, draft, onDraftHandled }) {
   const [editing, setEditing] = useState(null);
   const [viewing, setViewing] = useState(null);
   const [deleting, setDeleting] = useState(null);
@@ -5896,7 +5919,7 @@ function PropostasModule({ propostas, clientes, vendedores, onChange, draft, onD
         <EmptyState icon={FileText} title="Nenhuma proposta encontrada" hint="Cria uma proposta nova, ou ajusta o filtro acima." />
       ) : (
         <Table
-          columns={["Cliente", "Obra", "Tipo", "Total", "Status", ""]}
+          columns={["Cliente", "Obra", "Tipo", "OS", "Total", "Status", ""]}
           rows={[...propostasFiltradas].sort((a, b) => (b.criadaEm || "").localeCompare(a.criadaEm || "")).map((p) => {
             const cliente = clientes.find((c) => c.id === p.clienteId);
             const total = p.itens.reduce((s, it) => s + (Number(it.qtd) || 0) * (Number(it.valorUnit) || 0), 0);
@@ -5907,6 +5930,9 @@ function PropostasModule({ propostas, clientes, vendedores, onChange, draft, onD
                 <td style={{ ...tdStyle, fontWeight: 500 }}>{cliente ? cliente.nome : "-"}</td>
                 <td style={{ ...tdStyle, color: "var(--text-muted)" }}>{p.obraTexto || "-"}</td>
                 <td style={{ ...tdStyle, color: "var(--text-muted)" }}>{p.tipo}</td>
+                <td style={{ ...tdStyle, color: "var(--text-muted)" }} className="tl-mono">
+                  {(() => { const osp = (ordensServico || []).find((o) => o.id === p.ordemServicoId); return osp ? `nº ${osp.numero || "s/nº"}` : "-"; })()}
+                </td>
                 <td style={tdStyle} className="tl-mono">{money(total)}</td>
                 <td style={tdStyle}>
                   <span style={{ background: cor.bg, color: cor.fg, padding: "3px 9px", borderRadius: "20px", fontSize: "11px", fontWeight: 700 }}>
@@ -5946,7 +5972,7 @@ function PropostasModule({ propostas, clientes, vendedores, onChange, draft, onD
       )}
 
       {editing && (
-        <PropostaForm initial={editing} clientes={clientes} vendedores={vendedores} onSave={save} onClose={() => setEditing(null)} />
+        <PropostaForm initial={editing} clientes={clientes} vendedores={vendedores} ordensServico={ordensServico} onSave={save} onClose={() => setEditing(null)} />
       )}
       {viewing && (
         <PropostaPreview proposta={viewing} cliente={clientes.find((c) => c.id === viewing.clienteId)} onClose={() => setViewing(null)} />
@@ -5987,7 +6013,7 @@ function BaixaPropostaModal({ baixando, onConfirm, onCancel }) {
   );
 }
 
-function PropostaForm({ initial, clientes, vendedores, onSave, onClose }) {
+function PropostaForm({ initial, clientes, vendedores, ordensServico, onSave, onClose }) {
   const [form, setForm] = useState(initial);
   const [rascunhoRecuperado] = useState(() => !!initial.__rascunho);
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
@@ -6004,6 +6030,31 @@ function PropostaForm({ initial, clientes, vendedores, onSave, onClose }) {
 
   const total = form.itens.reduce((s, it) => s + (Number(it.qtd) || 0) * (Number(it.valorUnit) || 0), 0);
 
+  // Escolheu uma OS: puxa cliente, obra, endereço, serviço e valor dela (o
+  // valor vira o item da proposta, se os itens ainda estiverem em branco).
+  const aplicarOS = (id) => {
+    if (!id) {
+      setForm({ ...form, ordemServicoId: "" });
+      return;
+    }
+    const os = (ordensServico || []).find((o) => o.id === id);
+    if (!os) return;
+    const cli = clientes.find((c) => c.id === os.clienteId);
+    const itensEmBranco = form.itens.every((it) => !it.descricao && !it.valorUnit);
+    setForm({
+      ...form,
+      ordemServicoId: id,
+      clienteId: os.clienteId || form.clienteId,
+      obraTexto: os.obraTexto || form.obraTexto,
+      enderecoEntrega: os.enderecoObra || form.enderecoEntrega,
+      tipo: os.servico || form.tipo,
+      vendedorId: form.vendedorId || cli?.vendedorId || "",
+      itens: itensEmBranco && (os.servico || os.valor)
+        ? [{ id: uid(), descricao: os.servico || form.tipo || "", qtd: 1, valorUnit: os.valor || "" }]
+        : form.itens,
+    });
+  };
+
   return (
     <Modal title={initial.clienteId ? "Editar proposta" : "Nova proposta"} onClose={() => { limparRascunho("proposta"); onClose(); }} wide>
       {rascunhoRecuperado && <RascunhoBanner />}
@@ -6014,9 +6065,23 @@ function PropostaForm({ initial, clientes, vendedores, onSave, onClose }) {
           onSave(form);
         }}
       >
+        <Field label="Ordem de serviço" hint="Escolha uma OS e os dados (cliente, obra, endereço, serviço e valor) entram sozinhos — dá pra ajustar depois">
+          <Select value={form.ordemServicoId || ""} onChange={(e) => aplicarOS(e.target.value)}>
+            <option value="">Sem ordem de serviço</option>
+            {ordenarOSPorNumero(ordensServico).map((o) => <option key={o.id} value={o.id}>{rotuloOS(o, clientes)}</option>)}
+          </Select>
+        </Field>
+
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 16px" }}>
           <Field label="Cliente" required>
-            <Select value={form.clienteId} onChange={set("clienteId")} required>
+            <Select
+              value={form.clienteId}
+              onChange={(e) => {
+                const cli = clientes.find((c) => c.id === e.target.value);
+                setForm({ ...form, clienteId: e.target.value, vendedorId: form.vendedorId || cli?.vendedorId || "" });
+              }}
+              required
+            >
               <option value="">Selecione...</option>
               {clientes.map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}
             </Select>
@@ -10781,7 +10846,6 @@ function FinanceiroModule({ contas, clientes, clienteByPedido, producaoEsc, prod
         {[
           { id: "receber", label: "A Receber", icon: TrendingUp, qtd: qtdReceber },
           { id: "pagar", label: "A Pagar", icon: TrendingDown, qtd: qtdPagar },
-          { id: "producaoEsc", label: "Produção-Concreto", icon: Truck, qtd: producaoEsc.length },
           { id: "relatorio", label: "Relatório", icon: BarChart2 },
         ].map((t) => (
           <button
@@ -10817,14 +10881,6 @@ function FinanceiroModule({ contas, clientes, clienteByPedido, producaoEsc, prod
 
       {subTab === "relatorio" ? (
         <FinanceiroRelatorio contas={contas} producaoEsc={producaoEsc} producaoPerf={producaoPerf} onVerPedido={setVerRelatorioGeral} />
-      ) : subTab === "producaoEsc" ? (
-        <FinanceiroProducaoSection
-          producaoEsc={producaoEsc}
-          producaoPerf={producaoPerf}
-          onChangeProducaoEsc={onChangeProducaoEsc}
-          onChangeProducaoPerf={onChangeProducaoPerf}
-          tipoFixo="Escavadeira"
-        />
       ) : (
         <>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "12px", marginBottom: "20px" }}>
@@ -12787,6 +12843,7 @@ function BadgeAgendamento({ status }) {
 
 const emptyAgendamento = () => ({
   id: uid(),
+  ordemServicoId: "", // OS vinculada — puxa os dados sozinha
   clienteId: "",
   obraTexto: "", // nome/endereço da obra em texto livre (cadastro completo de obras por cliente vem numa próxima etapa)
   enderecoObra: "",
@@ -12817,7 +12874,7 @@ function temConflitoAgenda(agendamentos, bombaId, data, inicio, fim, ignorarId) 
   });
 }
 
-function AgendaBombasModule({ agendamentos, bombas, clientes, onChange, onGerarOS }) {
+function AgendaBombasModule({ agendamentos, ordensServico, bombas, clientes, onChange, onGerarOS }) {
   const [editing, setEditing] = useState(null);
   const [deleting, setDeleting] = useState(null);
   const [visao, setVisao] = useState("semana"); // dia | semana | mes
@@ -12826,6 +12883,35 @@ function AgendaBombasModule({ agendamentos, bombas, clientes, onChange, onGerarO
 
   const bombaNome = (id) => bombas.find((b) => b.id === id)?.codigo || "-";
   const clienteNome = (id) => clientes.find((c) => c.id === id)?.nome || "-";
+
+  // OS ligada a esse agendamento: a escolhida no formulário, ou a que foi
+  // gerada pelo botão "Gerar OS".
+  const osDoAgendamento = (a) =>
+    (ordensServico || []).find((o) => o.id === a.ordemServicoId) || (ordensServico || []).find((o) => o.agendamentoId === a.id);
+
+  // Escolheu uma OS: puxa cliente, bomba, obra, endereço, data, horário,
+  // operador e serviço dela. O que a OS não tiver preenchido fica como estava.
+  const aplicarOS = (id) => {
+    if (!id) {
+      setEditing({ ...editing, ordemServicoId: "" });
+      return;
+    }
+    const os = (ordensServico || []).find((o) => o.id === id);
+    if (!os) return;
+    setEditing({
+      ...editing,
+      ordemServicoId: id,
+      clienteId: os.clienteId || editing.clienteId,
+      bombaId: os.bombaId || editing.bombaId,
+      obraTexto: os.obraTexto || editing.obraTexto,
+      enderecoObra: os.enderecoObra || editing.enderecoObra,
+      data: os.data || editing.data,
+      horarioInicio: os.horario || editing.horarioInicio,
+      operador: os.operador || editing.operador,
+      tipoServico: os.servico || editing.tipoServico,
+      observacao: os.observacao || editing.observacao,
+    });
+  };
 
   const salvar = (item) => {
     const conflito = temConflitoAgenda(agendamentos, item.bombaId, item.data, item.horarioInicio, item.horarioFim, item.id);
@@ -12900,6 +12986,7 @@ function AgendaBombasModule({ agendamentos, bombas, clientes, onChange, onGerarO
         <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
           {filtrados.map((a) => {
             const conflito = temConflitoAgenda(agendamentos, a.bombaId, a.data, a.horarioInicio, a.horarioFim, a.id);
+            const osVinc = osDoAgendamento(a);
             return (
               <div key={a.id} style={{ background: "var(--bg-panel)", border: "1px solid var(--border-soft)", borderRadius: "9px", padding: "12px 16px" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
@@ -12907,6 +12994,11 @@ function AgendaBombasModule({ agendamentos, bombas, clientes, onChange, onGerarO
                     <span style={{ fontWeight: 700, fontSize: "13.5px" }}>{fmtDate(a.data)}</span>
                     <span style={{ fontSize: "12.5px", color: "var(--text-muted)" }}>{a.horarioInicio || "?"} — {a.horarioFim || "?"}</span>
                     <BadgeAgendamento status={a.status} />
+                    {osVinc && (
+                      <span className="tl-mono" style={{ fontSize: "11px", color: "var(--text-muted)", border: "1px solid var(--border-soft)", padding: "2px 8px", borderRadius: "20px" }}>
+                        OS nº {osVinc.numero || "s/nº"}
+                      </span>
+                    )}
                     {conflito && a.status !== "Cancelado" && (
                       <span style={{ display: "flex", alignItems: "center", gap: "4px", fontSize: "11px", color: "var(--danger)", fontWeight: 700 }}>
                         <AlertTriangle size={12} /> Conflito de horário
@@ -12914,7 +13006,7 @@ function AgendaBombasModule({ agendamentos, bombas, clientes, onChange, onGerarO
                     )}
                   </div>
                   <div style={{ display: "flex", gap: "6px" }}>
-                    {a.status !== "Cancelado" && (
+                    {a.status !== "Cancelado" && !osVinc && (
                       <Button size="sm" variant="subtle" icon={ClipboardList} onClick={() => onGerarOS(a)}>Gerar OS</Button>
                     )}
                     <RowActions onEdit={() => setEditing(a)} onDelete={() => setDeleting(a)} />
@@ -12933,7 +13025,7 @@ function AgendaBombasModule({ agendamentos, bombas, clientes, onChange, onGerarO
       )}
 
       {editing && (
-        <Modal title={editing.clienteId ? "Editar agendamento" : "Novo agendamento"} onClose={() => setEditing(null)} wide>
+        <Modal title={agendamentos.some((a) => a.id === editing.id) ? "Editar agendamento" : "Novo agendamento"} onClose={() => setEditing(null)} wide>
           {erroConflito && (
             <div style={{ background: "#52431D", color: "#F0B958", borderRadius: "8px", padding: "10px 14px", marginBottom: "14px", fontSize: "12.5px", display: "flex", gap: "8px", alignItems: "flex-start" }}>
               <AlertTriangle size={16} style={{ flexShrink: 0, marginTop: "1px" }} />
@@ -12941,6 +13033,12 @@ function AgendaBombasModule({ agendamentos, bombas, clientes, onChange, onGerarO
             </div>
           )}
           <form onSubmit={(e) => { e.preventDefault(); salvar(editing); }}>
+            <Field label="Ordem de serviço" hint="Escolha uma OS e os dados (cliente, bomba, obra, data, horário, operador e serviço) entram sozinhos — dá pra ajustar depois">
+              <Select value={editing.ordemServicoId || ""} onChange={(e) => aplicarOS(e.target.value)}>
+                <option value="">Sem ordem de serviço</option>
+                {ordenarOSPorNumero(ordensServico).map((o) => <option key={o.id} value={o.id}>{rotuloOS(o, clientes)}</option>)}
+              </Select>
+            </Field>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 16px" }}>
               <Field label="Cliente" required>
                 <Select value={editing.clienteId} onChange={(e) => setEditing({ ...editing, clienteId: e.target.value })} required>
@@ -13021,8 +13119,20 @@ function AgendaBombasModule({ agendamentos, bombas, clientes, onChange, onGerarO
 /*  Ordens de Serviço                                                  */
 /* ------------------------------------------------------------------ */
 
+// Número que identifica cada OS (1, 2, 3...) — usado nos vínculos entre
+// Agenda, Propostas e Ordens de Serviço.
+const proximoNumeroOS = (ordens) => Math.max(0, ...(ordens || []).map((o) => parseInt(o.numero, 10) || 0)) + 1;
+const ordenarOSPorNumero = (ordens) => [...(ordens || [])].sort((a, b) => (parseInt(b.numero, 10) || 0) - (parseInt(a.numero, 10) || 0));
+const rotuloOS = (o, clientes) => {
+  const cli = (clientes || []).find((c) => c.id === o.clienteId)?.nome || "sem cliente";
+  return `OS nº ${o.numero || "s/nº"} — ${cli} — ${fmtDate(o.data)}${o.servico ? ` — ${o.servico}` : ""}${o.status && o.status !== "Aberta" ? ` (${o.status})` : ""}`;
+};
+const totalDaProposta = (p) => (p.itens || []).reduce((s, it) => s + (Number(it.qtd) || 0) * (Number(it.valorUnit) || 0), 0);
+
 const emptyOrdemServico = (base) => ({
   id: uid(),
+  numero: "", // gerado automaticamente ao salvar
+  propostaId: "",
   agendamentoId: base?.id || "",
   clienteId: base?.clienteId || "",
   obraTexto: base?.obraTexto || "",
@@ -13045,7 +13155,7 @@ const emptyOrdemServico = (base) => ({
   assinaturaResponsavel: "",
 });
 
-function OrdensServicoModule({ ordens, clientes, bombas, agendamentos, onChange, draft, onDraftHandled }) {
+function OrdensServicoModule({ ordens, clientes, bombas, agendamentos, propostas, onChange, draft, onDraftHandled }) {
   const [editing, setEditing] = useState(null);
   const [deleting, setDeleting] = useState(null);
 
@@ -13061,12 +13171,71 @@ function OrdensServicoModule({ ordens, clientes, bombas, agendamentos, onChange,
 
   const salvar = (item) => {
     const existe = ordens.some((o) => o.id === item.id);
-    onChange(existe ? ordens.map((o) => (o.id === item.id ? item : o)) : [...ordens, item]);
+    const final = { ...item, numero: item.numero || proximoNumeroOS(ordens) };
+    onChange(existe ? ordens.map((o) => (o.id === final.id ? final : o)) : [...ordens, final]);
     setEditing(null);
   };
   const remove = (id) => {
     onChange(ordens.filter((o) => o.id !== id));
     setDeleting(null);
+  };
+
+  // "Puxar dados de": escolhe um agendamento, uma proposta ou uma OS anterior e
+  // preenche o que der (cliente, bomba, obra, endereço, operador, serviço, valor).
+  // O que a origem não tiver fica como estava. O registro de execução (horários,
+  // horímetro, ocorrências, assinatura) nunca é copiado.
+  const puxarDados = (valor) => {
+    const [tipo, id] = String(valor || "").split(":");
+    if (!tipo || !id) {
+      setEditing({ ...editing, agendamentoId: "", propostaId: "" });
+      return;
+    }
+    if (tipo === "ag") {
+      const ag = (agendamentos || []).find((a) => a.id === id);
+      if (!ag) return;
+      setEditing({
+        ...editing,
+        agendamentoId: ag.id,
+        propostaId: "",
+        clienteId: ag.clienteId || editing.clienteId,
+        bombaId: ag.bombaId || editing.bombaId,
+        obraTexto: ag.obraTexto || editing.obraTexto,
+        enderecoObra: ag.enderecoObra || editing.enderecoObra,
+        data: ag.data || editing.data,
+        horario: ag.horarioInicio || editing.horario,
+        operador: ag.operador || editing.operador,
+        servico: ag.tipoServico || editing.servico,
+        observacao: ag.observacao || editing.observacao,
+      });
+    } else if (tipo === "pr") {
+      const pr = (propostas || []).find((x) => x.id === id);
+      if (!pr) return;
+      const total = totalDaProposta(pr);
+      setEditing({
+        ...editing,
+        propostaId: pr.id,
+        agendamentoId: "",
+        clienteId: pr.clienteId || editing.clienteId,
+        obraTexto: pr.obraTexto || editing.obraTexto,
+        enderecoObra: pr.enderecoEntrega || editing.enderecoObra,
+        servico: pr.tipo || editing.servico,
+        valor: total > 0 ? total.toFixed(2) : editing.valor,
+        observacao: editing.observacao || pr.observacao || "",
+      });
+    } else if (tipo === "os") {
+      const o = ordens.find((x) => x.id === id);
+      if (!o) return;
+      setEditing({
+        ...editing,
+        clienteId: o.clienteId || editing.clienteId,
+        bombaId: o.bombaId || editing.bombaId,
+        obraTexto: o.obraTexto || editing.obraTexto,
+        enderecoObra: o.enderecoObra || editing.enderecoObra,
+        operador: o.operador || editing.operador,
+        servico: o.servico || editing.servico,
+        valor: o.valor || editing.valor,
+      });
+    }
   };
 
   const ordenadas = [...ordens].sort((a, b) => dataOrdenavel(b.data).localeCompare(dataOrdenavel(a.data)));
@@ -13082,9 +13251,10 @@ function OrdensServicoModule({ ordens, clientes, bombas, agendamentos, onChange,
         <EmptyState icon={ClipboardList} title="Nenhuma ordem de serviço ainda" hint='Gera uma OS direto de um agendamento na Agenda, com o botão "Gerar OS".' />
       ) : (
         <Table
-          columns={["Data", "Cliente", "Obra", "Bomba", "Valor", "Status", ""]}
+          columns={["Nº", "Data", "Cliente", "Obra", "Bomba", "Valor", "Status", ""]}
           rows={ordenadas.map((o) => (
             <tr key={o.id} style={rowStyle}>
+              <td style={{ ...tdStyle, fontWeight: 700 }} className="tl-mono">{o.numero || "-"}</td>
               <td style={{ ...tdStyle, color: "var(--text-muted)" }}>{fmtDate(o.data)}</td>
               <td style={{ ...tdStyle, fontWeight: 600 }}>{clienteNome(o.clienteId)}</td>
               <td style={{ ...tdStyle, color: "var(--text-muted)" }}>{o.obraTexto || "-"}</td>
@@ -13099,8 +13269,44 @@ function OrdensServicoModule({ ordens, clientes, bombas, agendamentos, onChange,
         />
       )}
       {editing && (
-        <Modal title={editing.clienteId ? "Ordem de Serviço" : "Nova OS"} onClose={() => setEditing(null)} wide>
+        <Modal title={ordens.some((o) => o.id === editing.id) ? "Ordem de Serviço" : "Nova OS"} onClose={() => setEditing(null)} wide>
           <form onSubmit={(e) => { e.preventDefault(); salvar(editing); }}>
+            <div className="tl-mono" style={{ fontSize: "12px", color: "var(--text-muted)", marginBottom: "12px" }}>
+              {editing.numero ? `OS nº ${editing.numero}` : "O número da OS é gerado automaticamente ao salvar"}
+            </div>
+            <Field label="Puxar dados de" hint="Escolha um agendamento, uma proposta ou uma OS anterior e os dados entram sozinhos — dá pra ajustar depois">
+              <Select
+                value={editing.agendamentoId ? `ag:${editing.agendamentoId}` : editing.propostaId ? `pr:${editing.propostaId}` : ""}
+                onChange={(e) => puxarDados(e.target.value)}
+              >
+                <option value="">Não puxar de nada</option>
+                {(agendamentos || []).length > 0 && (
+                  <optgroup label="Agendamentos">
+                    {[...(agendamentos || [])].sort((a, b) => dataOrdenavel(b.data).localeCompare(dataOrdenavel(a.data))).map((a) => (
+                      <option key={a.id} value={`ag:${a.id}`}>
+                        {fmtDate(a.data)} — {clientes.find((c) => c.id === a.clienteId)?.nome || "sem cliente"}{a.tipoServico ? ` — ${a.tipoServico}` : ""}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
+                {(propostas || []).length > 0 && (
+                  <optgroup label="Propostas">
+                    {[...(propostas || [])].sort((a, b) => (b.criadaEm || "").localeCompare(a.criadaEm || "")).map((pr) => (
+                      <option key={pr.id} value={`pr:${pr.id}`}>
+                        {clientes.find((c) => c.id === pr.clienteId)?.nome || "sem cliente"}{pr.tipo ? ` — ${pr.tipo}` : ""} — {money(totalDaProposta(pr))}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
+                {ordens.filter((o) => o.id !== editing.id).length > 0 && (
+                  <optgroup label="Ordens de serviço anteriores">
+                    {ordenarOSPorNumero(ordens.filter((o) => o.id !== editing.id)).map((o) => (
+                      <option key={o.id} value={`os:${o.id}`}>{rotuloOS(o, clientes)}</option>
+                    ))}
+                  </optgroup>
+                )}
+              </Select>
+            </Field>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 16px" }}>
               <Field label="Cliente" required>
                 <Select value={editing.clienteId} onChange={(e) => setEditing({ ...editing, clienteId: e.target.value })} required>
