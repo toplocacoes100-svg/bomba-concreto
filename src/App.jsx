@@ -1895,7 +1895,6 @@ export default function App() {
   const [vendedores, setVendedores] = useState([]);
   const [statusClientes, setStatusClientes] = useState([]);
   const checklists = []; // removido nesta versão
-  const ordensServico = []; // removido nesta versão
   const estacas = []; // removido nesta versão
   const [despesas, setDespesas] = useState([]);
   const [folhaPagamento, setFolhaPagamento] = useState([]);
@@ -13838,21 +13837,6 @@ const emptyChecklist = () => ({
   numeroSerie: "",
   respostas: {},
   observacoes: {},
-});
-
-const emptyOrdemServico = () => ({
-  id: uid(),
-  pedido: "",
-  cliente: "",
-  operadorId: "",
-  maquinaId: "",
-  endereco: "",
-  data: new Date().toISOString().slice(0, 10),
-  horario: "",
-  descricao: "",
-  observacao: "",
-  status: "Enviada",
-  criadaEm: new Date().toISOString(),
 });
 
 
